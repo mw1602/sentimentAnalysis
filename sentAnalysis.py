@@ -1,4 +1,5 @@
 # different approaches to sentiment analysis on movie review dataset
+#from kaggle tutorial
 
 import pandas as pd 
 import numpy as np
@@ -84,7 +85,7 @@ def train_word2vec(sentences):
 	context = 10          # Context window size                                                                                    
 	downsampling = 1e-3   # Downsample setting for frequent words
 
-	model = word2vec.Word2Vec(sentences, workers=num_workers, \
+	model = Word2Vec(sentences, workers=num_workers, \
             size=num_features, min_count = min_word_count, \
             window = context, sample = downsampling)
 	model.init_sims(replace=True)
@@ -118,7 +119,9 @@ def getAvgFeatureVecs(reviews, model, num_features):
 		num_reviews = num_reviews + 1
 	return featureVecs
 
-def word2vecAverageForestAnalysis(test,train,model, num_features):
+def word2vecAverageForestAnalysis(test,train,num_features):
+	#load model
+	model = Word2Vec.load("300features_40minwords_10context")
 	# clean test and train sets
 	clean_train_reviews = cleanReviews(train)
 	clean_test_reviews = cleanReviews(test)
@@ -128,15 +131,74 @@ def word2vecAverageForestAnalysis(test,train,model, num_features):
 	# train random forest on the training data
 	forest = trainForest(avg_train_vecs, train)
 	#predict values for test data based on forest
-	result = forest.predict(ave_test_vecs)
+	result = forest.predict(avg_test_vecs)
 	#write out results
 	predictions = pd.DataFrame( data={"id":test["id"], "sentiment":result} )
 	predictions.to_csv( "Word2Vec_AverageVectors.csv", index=False, quoting=3 )
 
 def kmeanscluster_word2vec(model):
 	word_vectors = model.syn0
+	# we're deciding to have about 5 words per cluster
 	num_clusters = word_vectors.shape[0]/5
+	#initialize a k-means objects and find centroids
+	kmeans_clustering = KMeans(n_clusters=num_clusters)
+	idx = kmeans_clustering.fit_predict(word_vectors)
+	word_centroid_map = dict(zip(model.index2word,idx))
+	return word_centroid_map
+
+def create_bag_of_centroids(wordlist, word_centroid_map):
+	num_centroids = max(word_centroid_map.values()) +1
+	#preallocate for speed
+	bag_of_centroids = np.zeros(num_centroids, dtype='float32')
+	#loop over words in review, find the cluster that each word belongs to, add to count
+	for word in wordlist:
+		if word in word_centroid_map.keys(): #some words seem to be missing, maybe tokenizer?
+			index = word_centroid_map[word]
+			bag_of_centroids[index] += 1
+	return bag_of_centroids
+
+def bag_of_centroids_analysis(model, word_centroid_map, train,test):
+	word_vectors = model.syn0
+	num_clusters = word_vectors.shape[0]/5
+	#clean reviews
+	clean_test = cleanReviews(test)
+	clean_train = cleanReviews(train)
+
+	#create train bag of centroids
+	#preallocate for speed
+	train_centroids = np.zeros((train['review'].size, num_clusters),dtype='float32')
+	counter = 0
+	for review in clean_train:
+		words = review.split()
+		train_centroids[counter] = create_bag_of_centroids(words, word_centroid_map)
+	counter += 1
+
+	#create test bag of centroids
+	#preallocate
+	test_centroids = np.zeros((test['review'].size, num_clusters),dtype='float32')
+	counter = 0
+	for review in clean_test:
+		words = review.split()
+		test_centroids[counter] = create_bag_of_centroids(words, word_centroid_map)
+		counter +=1
+
+	# fit a random forest
+
+	forest = trainForest(train_centroids, train)
+
+	#predict
+
+	result = forest.predict(test_centroids)
+
+	output = pd.DataFrame(data={"id":test["id"], "sentiment":result})
+	output.to_csv( "BagOfCentroids.csv", index=False, quoting=3 )
+
+
+
+
+
 	
+
 
 
 
